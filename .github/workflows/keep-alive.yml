@@ -1,0 +1,47 @@
+name: keep-supabase-alive
+
+on:
+  schedule:
+    # Corre a las 09:00 UTC los dias 1,4,7,10... del mes (cada 3 dias).
+    # El maximo intervalo entre corridas queda en ~3 dias, bien por
+    # debajo del limite de 7 dias de inactividad de Supabase.
+    - cron: "0 9 */3 * *"
+  # Boton para correrlo a mano cuando quieras (para probar).
+  workflow_dispatch:
+
+# Permiso para que el robot pueda hacer el commit del "latido".
+permissions:
+  contents: write
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Descargar el repo
+        uses: actions/checkout@v4
+
+      - name: Ping a Supabase
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        run: |
+          code=$(curl -sS -X POST -o /dev/null -w "%{http_code}" \
+            "$SUPABASE_URL/rest/v1/rpc/ping_keep_alive" \
+            -H "apikey: $SUPABASE_ANON_KEY" \
+            -H "Content-Type: application/json" \
+            -d '{}')
+          echo "Respuesta HTTP: $code"
+          if [ "$code" -ne 200 ]; then
+            echo "El ping fallo (esperaba un 200). Revisa la URL, la llave o el SQL."
+            exit 1
+          fi
+          echo "Ping OK, proyecto despierto."
+
+      - name: Latido para que GitHub no apague el cron
+        run: |
+          date -u +"Ultimo keep-alive: %Y-%m-%dT%H:%M:%SZ" > heartbeat.txt
+          git config user.name "keep-alive-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add heartbeat.txt
+          git commit -m "keep-alive $(date -u +%F)" || echo "Sin cambios que commitear"
+          git push
